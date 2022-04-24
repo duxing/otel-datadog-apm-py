@@ -1,0 +1,48 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+
+exporters:
+  
+  logging:
+    loglevel: debug
+    sampling_initial: 1
+    sampling_thereafter: 1
+
+  # datadog exporter reference:
+  # https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/datadogexporter/example/config.yaml
+  datadog:
+    # env: ${DD_ENV} # use "deployment.environment": https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/datadogexporter/example/config.yaml#L18
+    # service: ${DD_SERVICE} # use "service.name": https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/datadogexporter/example/config.yaml#L26
+    # version: ${DD_VERSION} # use "service.version": https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/datadogexporter/example/config.yaml#L34
+    # hostname: ${DD_HOST}
+
+    api:
+      key: "${DD_API_KEY}"
+    traces:
+      span_name_remappings:
+        opentelemetry.instrumentation.flask.server: flask.server
+        opentelemetry.instrumentation.redis.client: redis.client
+        opentelemetry.instrumentation.redis.server: redis.server
+      span_name_as_resource_name: true
+
+processors:
+  batch:
+
+extensions:
+  health_check:
+  zpages:
+    endpoint: :55679
+
+service:
+  extensions: [zpages, health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [datadog, logging]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [datadog, logging]

@@ -1,0 +1,83 @@
+version: '3.6'
+services:
+  py-http-otel: # flask http server instrumented with OpenTelemetry
+    build: ./http-otel/
+    image: ${REPO:-duxing/otel-datadog-apm-py/http-otel}:${TAG:-latest}
+    # to auto-instrument: prepent command with "opentelemetry-instrument"
+    # manual instrumentation is setup in code.
+    command: ["flask", "run", "-h", "0.0.0.0", "-p", "8080"]
+    environment:
+      ENV: ${ENV}
+      SERVICE: ${SERVICE}-otel
+      VERSION: ${VERSION:-latest}
+      # created in code: need multiple resources.
+      # OTEL_SERVICE_NAME: ${SERVICE}-http-otel
+      # OTEL_RESOURCE_ATTRIBUTES: "service.name=${SERVICE}-otel-api,deployment.environment=${ENV},service.version=${VERSION:-latest}"
+      # datadog:4317 (DataDog OTEL ingestion is not stable yet)
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317 # trace over grpc
+      REDIS0_HOST: redis0
+      REDIS0_PORT: 6379
+      REDIS1_HOST: redis1
+      REDIS1_PORT: 6379
+      SHARED_REDIS_SERVICE_NAME: another-service-redis
+    ports:
+      - 8080
+  py-http-dd: # flask http server instrumented with ddtrace
+    build: ./http-dd/
+    image: ${REPO:-duxing/otel-datadog-apm-py/http-dd}:${TAG:-latest}
+    # prepent command with "ddtrace" to auto-instrument
+    command: ["flask", "run", "-h", "0.0.0.0", "-p", "8080"]
+    environment:
+      SERVICE: ${SERVICE}-dd
+      DD_SERVICE: ${SERVICE}-dd-api
+      DD_ENV: ${ENV}
+      DD_VERSION: ${VERSION:-latest}
+      DD_TAGS: "lang:py,impl:ddtrace"
+      DD_TRACE_AGENT_URL: http://datadog:8126 # trace over http
+      # use DD_SERVICE_MAPPING: turn on if necessary
+      DD_TRACE_SAMPLE_RATE: 1.0
+      DD_TRACE_ENABLED: "True"
+      DD_PATCH_MODULES: "flask:true,redis:false"
+      
+      REDIS0_HOST: redis0
+      REDIS0_PORT: 6379
+      REDIS1_HOST: redis1
+      REDIS1_PORT: 6379
+      SHARED_REDIS_SERVICE_NAME: another-service-redis
+    ports:
+      - 8080
+  redis0:
+    image: redis:6-alpine
+    ports:
+      - 6379
+  redis1:
+    image: redis:6-alpine
+    ports:
+      - 6379
+  datadog:
+    image: datadog/agent:7.35.0
+    environment:
+      DD_LOG_LEVEL: "OFF"
+      DD_API_KEY: ${DD_API_KEY}
+      DD_APM_ENABLED: "true"
+      DD_APM_NON_LOCAL_TRAFFIC: "true"
+      DD_DOGSTATSD_NON_LOCAL_TRAFFIC: "true"
+      # OTEL ingestion related configurations:
+      # DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT: 0.0.0.0:4317
+      # DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_TRANSPORT: tcp
+      # DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT: 0.0.0.0:4318
+      # DD_OTLP_CONFIG_METRICS_ENABLED: "true"
+      # DD_OTLP_CONFIG_TRACES_ENABLED: "true"
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib-dev:latest
+    command: ["--config=/etc/otel-collector-config.yaml", "--config=env:COLLECTOR_EXTRA_CONFIG", "${OTELCOL_ARGS:-}"]
+    environment:
+      DD_API_KEY: ${DD_API_KEY}
+      # see: https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/8396
+      COLLECTOR_EXTRA_CONFIG: "exporters::datadog::tags: [\"lang:py\", \"impl:opentelemetry\"]"
+    volumes:
+      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - 13133 # health_check extension
+      - 4317  # OTLP gRPC receiver
+      - 55679 # zpages extension
